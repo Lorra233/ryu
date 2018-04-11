@@ -393,25 +393,25 @@ class NetworkMonitor(app_manager.RyuApp):
         #                    stat.instructions[0].actions[0].port)][-1])))
         #    print('\n')
 
-        #if(type == 'port'):
-        #    print('datapath             port   ''rx-pkts  rx-bytes rx-error '
-        #          'tx-pkts  tx-bytes tx-error  port-speed(B/s)'
-        #          ' current-capacity(Kbps)  '
-        #          'port-stat   link-stat')
-        #    print('----------------   -------- ''-------- -------- -------- '
-        #          '-------- -------- -------- '
-        #          '----------------  ----------------   '
-        #          '   -----------    -----------')
-        #    format = '%016x %8x %8d %8d %8d %8d %8d %8d %8.1f %16d %16s %16s'
-        #    for dpid in bodys.keys():
-        #        for stat in sorted(bodys[dpid], key=attrgetter('port_no')):
-        #            if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
-        #                print(format % (
-        #                    dpid, stat.port_no,
-        #                    stat.rx_packets, stat.rx_bytes, stat.rx_errors,
-        #                    stat.tx_packets, stat.tx_bytes, stat.tx_errors,
-        #                    abs(self.port_speed[(dpid, stat.port_no)][-1]),
-        #                    self.port_features[dpid][stat.port_no][2],
-        #                    self.port_features[dpid][stat.port_no][0],
-        #                    self.port_features[dpid][stat.port_no][1]))
-        #    print('\n')
+        if(type == 'port'):
+            print('datapath             port   ''rx-pkts  rx-bytes rx-error '
+                  'tx-pkts  tx-bytes tx-error  port-speed(B/s)'
+                  ' current-capacity(Kbps)  '
+                  'port-stat   link-stat')
+            print('----------------   -------- ''-------- -------- -------- '
+                  '-------- -------- -------- '
+                  '----------------  ----------------   '
+                  '   -----------    -----------')
+            format = '%016x %8x %8d %8d %8d %8d %8d %8d %8.1f %16d %16s %16s'
+            for dpid in bodys.keys():
+                for stat in sorted(bodys[dpid], key=attrgetter('port_no')):
+                    if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
+                        print(format % (
+                            dpid, stat.port_no,
+                            stat.rx_packets, stat.rx_bytes, stat.rx_errors,
+                            stat.tx_packets, stat.tx_bytes, stat.tx_errors,
+                            abs(self.port_speed[(dpid, stat.port_no)][-1]),
+                            self.port_features[dpid][stat.port_no][2],
+                            self.port_features[dpid][stat.port_no][0],
+                            self.port_features[dpid][stat.port_no][1]))
+            print('\n')

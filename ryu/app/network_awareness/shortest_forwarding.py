@@ -121,7 +121,7 @@ class ShortestForwarding(app_manager.RyuApp):
             ipv4_src=flow_info[1], ipv4_dst=flow_info[2])
 
         self.add_flow(datapath, 1, match, actions,
-                      idle_timeout=15, hard_timeout=60)
+                      idle_timeout=0, hard_timeout=0)
 
     def _build_packet_out(self, datapath, buffer_id, src_port, dst_port, data):
         """

@@ -131,6 +131,7 @@ class NetworkAwareness(app_manager.RyuApp):
         """
             Get Adjacency matrix from link_to_port
         """
+        self.graph.clear()
         for src in self.switches:
             for dst in self.switches:
                 if src == dst:
@@ -157,7 +158,9 @@ class NetworkAwareness(app_manager.RyuApp):
             Get links`srouce port to dst port  from link_list,
             link_to_port:(src_dpid,dst_dpid)->(src_port,dst_port)
         """
+        self.link_to_port.clear()
         for link in link_list:
+            #self.logger.info(link)
             src = link.src
             dst = link.dst
             self.link_to_port[
@@ -182,6 +185,7 @@ class NetworkAwareness(app_manager.RyuApp):
         """
             Great K shortest paths of src to dst.
         """
+        #print('graph.edges:', graph.edges(), '\n')
         generator = nx.shortest_simple_paths(graph, source=src,
                                              target=dst, weight=weight)
         shortest_paths = []
@@ -226,13 +230,20 @@ class NetworkAwareness(app_manager.RyuApp):
         """
         switch_list = get_switch(self.topology_api_app, None)
         self.create_port_map(switch_list)
+        #print('switch_port_table:', self.switch_port_table, '\n')
         self.switches = self.switch_port_table.keys()
+        #print('self.switches:', self.switches, '\n')
         links = get_link(self.topology_api_app, None)
         self.create_interior_links(links)
+        #print('\n','link_to_port:', self.link_to_port, '\n')
+        #print('interior_ports:', self.interior_ports, '\n')
         self.create_access_ports()
+        #print('access_ports:', self.access_ports, '\n')
         self.get_graph(self.link_to_port.keys())
+        #print('graph.nodes:', self.graph.nodes(), '\n')
         self.shortest_paths = self.all_k_shortest_paths(
             self.graph, weight='weight', k=CONF.k_paths)
+        print('self.shortest_paths:', self.shortest_paths, '\n------')
 
     def register_access_info(self, dpid, in_port, ip, mac):
         """
