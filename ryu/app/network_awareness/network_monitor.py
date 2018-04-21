@@ -372,26 +372,26 @@ class NetworkMonitor(app_manager.RyuApp):
             return
 
         bodys = self.stats[type]
-        #if(type == 'flow'):
-        #    print('datapath         ''   in-port        ip-dst      '
-        #          'out-port packets  bytes  flow-speed(B/s)')
-        #    print('---------------- ''  -------- ----------------- '
-        #          '-------- -------- -------- -----------')
-        #    for dpid in bodys.keys():
-        #        for stat in sorted(
-        #            [flow for flow in bodys[dpid] if flow.priority == 1],
-        #            key=lambda flow: (flow.match.get('in_port'),
-        #                              flow.match.get('ipv4_dst'))):
-        #            print('%016x %8x %17s %8x %8d %8d %8.1f' % (
-        #                dpid,
-        #                stat.match['in_port'], stat.match['ipv4_dst'],
-        #                stat.instructions[0].actions[0].port,
-        #                stat.packet_count, stat.byte_count,
-        #                abs(self.flow_speed[dpid][
-        #                    (stat.match.get('in_port'),
-        #                    stat.match.get('ipv4_dst'),
-        #                    stat.instructions[0].actions[0].port)][-1])))
-        #    print('\n')
+        if(type == 'flow'):
+            print('datapath         ''   in-port        ip-dst      '
+                  'out-port packets  bytes  flow-speed(B/s)')
+            print('---------------- ''  -------- ----------------- '
+                  '-------- -------- -------- -----------')
+            for dpid in bodys.keys():
+                for stat in sorted(
+                    [flow for flow in bodys[dpid] if flow.priority == 1],
+                    key=lambda flow: (flow.match.get('in_port'),
+                                      flow.match.get('ipv4_dst'))):
+                    print('%016x %8x %17s %8x %8d %8d %8.1f' % (
+                        dpid,
+                        stat.match['in_port'], stat.match['ipv4_dst'],
+                        stat.instructions[0].actions[0].port,
+                        stat.packet_count, stat.byte_count,
+                        abs(self.flow_speed[dpid][
+                            (stat.match.get('in_port'),
+                            stat.match.get('ipv4_dst'),
+                            stat.instructions[0].actions[0].port)][-1])))
+            print('\n')
 
         if(type == 'port'):
             print('datapath             port   ''rx-pkts  rx-bytes rx-error '

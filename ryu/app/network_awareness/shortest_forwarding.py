@@ -30,6 +30,7 @@ from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import arp
+from ryu.lib.packet import ether_types
 
 from ryu.topology import event, switches
 from ryu.topology.api import get_switch, get_link
@@ -66,6 +67,7 @@ class ShortestForwarding(app_manager.RyuApp):
         self.delay_detector = kwargs["network_delay_detector"]
         self.datapaths = {}
         self.weight = self.WEIGHT_MODEL[CONF.weight]
+        self.gid = 0
 
     def set_weight_mode(self, weight):
         """
@@ -108,13 +110,16 @@ class ShortestForwarding(app_manager.RyuApp):
                                 match=match, instructions=inst)
         dp.send_msg(mod)
 
-    def send_flow_mod(self, datapath, flow_info, src_port, dst_port):
+    def send_flow_mod(self, datapath, flow_info, src_port, dst_port, group_id=0):
         """
             Build flow entry, and send it to datapath.
         """
         parser = datapath.ofproto_parser
         actions = []
-        actions.append(parser.OFPActionOutput(dst_port))
+        if group_id == 0:
+            actions.append(parser.OFPActionOutput(dst_port))
+        else:
+            actions.append(parser.OFPActionGroup(group_id))
 
         match = parser.OFPMatch(
             in_port=src_port, eth_type=flow_info[0],
@@ -227,7 +232,9 @@ class ShortestForwarding(app_manager.RyuApp):
         graph = self.awareness.graph
 
         if weight == self.WEIGHT_MODEL['hop']:
-            return shortest_paths.get(src).get(dst)[0]
+            paths = shortest_paths.get(src).get(dst)
+            #print('get_path:', src, dst, paths)
+            return paths
         elif weight == self.WEIGHT_MODEL['delay']:
             # If paths existed, return it, else calculate it and save it.
             try:
@@ -277,13 +284,36 @@ class ShortestForwarding(app_manager.RyuApp):
 
         return src_sw, dst_sw
 
-    def install_flow(self, datapaths, link_to_port, access_table, path,
+    def send_group_mod(self, datapath, group_id_1, out_port_1, out_port_2):
+        ofp = datapath.ofproto
+        ofp_parser = datapath.ofproto_parser
+
+        actions_1 = [ofp_parser.OFPActionOutput(out_port_1)]
+        watch_port_1 = out_port_1
+        actions_2 = [ofp_parser.OFPActionOutput(out_port_2)]
+        watch_port_2 = out_port_2
+ 
+        buckets = [ofp_parser.OFPBucket(watch_port=watch_port_1, watch_group=0,
+                                        actions=actions_1), 
+                   ofp_parser.OFPBucket(watch_port=watch_port_2, watch_group=0,
+                                        actions=actions_2)]
+
+        group_id = group_id_1
+        req = ofp_parser.OFPGroupMod(datapath, ofp.OFPGC_ADD,
+                                     ofp.OFPGT_FF, group_id, buckets)
+        datapath.send_msg(req)
+
+
+    def install_flow(self, datapaths, link_to_port, access_table, paths,
                      flow_info, buffer_id, data=None):
         ''' 
             Install flow entires for roundtrip: go and back.
             @parameter: path=[dpid1, dpid2...]
                         flow_info=(eth_type, src_ip, dst_ip, in_port)
         '''
+        path, path_ = paths[0], paths[1]
+
+        #------ working path install
         if path is None or len(path) == 0:
             self.logger.info("Path error!")
             return
@@ -302,6 +332,11 @@ class ShortestForwarding(app_manager.RyuApp):
                 if port and port_next:
                     src_port, dst_port = port[1], port_next[0]
                     datapath = datapaths[path[i]]
+                    #self.send_group_mod(datapath, self.gid, dst_port, src_port)
+                    #self.send_group_mod(datapath, self.gid+1, src_port, dst_port)
+                    #self.send_flow_mod(datapath, flow_info, src_port, dst_port, self.gid)
+                    #self.send_flow_mod(datapath, back_info, dst_port, src_port, self.gid+1)
+                    
                     self.send_flow_mod(datapath, flow_info, src_port, dst_port)
                     self.send_flow_mod(datapath, back_info, dst_port, src_port)
                     self.logger.debug("inter_link flow install")
@@ -318,10 +353,18 @@ class ShortestForwarding(app_manager.RyuApp):
             if dst_port is None:
                 self.logger.info("Last port is not found.")
                 return
-
+            port_pair_ = self.get_port_pair_from_link(link_to_port,
+                                                      path_[-2], path_[-1])
+            bp_port = port_pair_[1]
             last_dp = datapaths[path[-1]]
+            #self.send_group_mod(last_dp, self.gid, dst_port, src_port)
+            self.send_group_mod(last_dp, self.gid + 1, src_port, bp_port)
+            #self.send_flow_mod(last_dp, flow_info, src_port, dst_port, self.gid)
+            self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid+1)
+
             self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
-            self.send_flow_mod(last_dp, back_info, dst_port, src_port)
+            #self.send_flow_mod(last_dp, back_info, dst_port, src_port)
+
 
             # the first flow entry
             port_pair = self.get_port_pair_from_link(link_to_port,
@@ -330,7 +373,15 @@ class ShortestForwarding(app_manager.RyuApp):
                 self.logger.info("Port not found in first hop.")
                 return
             out_port = port_pair[0]
-            self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+            port_pair_ = self.get_port_pair_from_link(link_to_port,
+                                                      path_[0], path_[1])
+            bp_port = port_pair_[0]
+            self.send_group_mod(first_dp, self.gid, out_port, bp_port)
+            #self.send_group_mod(first_dp, self.gid+1, in_port, out_port)
+            self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
+            #self.send_flow_mod(first_dp, back_info, out_port, in_port, self.gid+1)
+
+            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
             self.send_flow_mod(first_dp, back_info, out_port, in_port)
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
 
@@ -340,9 +391,54 @@ class ShortestForwarding(app_manager.RyuApp):
             if out_port is None:
                 self.logger.info("Out_port is None in same dp")
                 return
+            print('src and dst on the same datapath.\n')
             self.send_flow_mod(first_dp, flow_info, in_port, out_port)
             self.send_flow_mod(first_dp, back_info, out_port, in_port)
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
+
+        #---- backup path install 
+        if len(path_) > 2:
+            for i in range(1, len(path_)-1):
+                port = self.get_port_pair_from_link(link_to_port,
+                                                    path_[i-1], path_[i])
+                port_next = self.get_port_pair_from_link(link_to_port,
+                                                         path_[i], path_[i+1])
+                if port and port_next:
+                    src_port, dst_port = port[1], port_next[0]
+                    datapath = datapaths[path_[i]]
+                    self.send_flow_mod(datapath, flow_info, src_port, dst_port)
+                    self.send_flow_mod(datapath, back_info, dst_port, src_port)
+                    self.logger.debug("inter_link of bp flow install")
+
+        if len(path_) > 1:
+            port_pair = self.get_port_pair_from_link(link_to_port,
+                                                     path_[-2], path_[-1])
+            if port_pair is None:
+                self.logger.info("BP: port is not found")
+                return
+            src_port = port_pair[1]
+            dst_port = self.get_port(flow_info[2], access_table)
+            if dst_port is None:
+                self.logger.info("BP: last port is not found.")
+                return
+            last_dp = datapaths[path_[-1]]
+            self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
+            
+            port_pair = self.get_port_pair_from_link(link_to_port,
+                                                     path_[0], path_[1])
+            if port_pair is None:
+                self.logger.info("BP: port not found in first hop.")
+                return
+            out_port = port_pair[0]
+            self.send_flow_mod(first_dp, back_info, out_port, in_port)
+            
+        else:
+            out_port = self.get_port(flow_info[2], access_table)
+            if out_port is None:
+                self.logger.info("BP: out_port is None in same dp.")
+                return
+            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+            #self.send_flow_mod(first_dp, back_info, out_port, in_port)
 
     def shortest_forwarding(self, msg, eth_type, ip_src, ip_dst):
         """
@@ -359,13 +455,14 @@ class ShortestForwarding(app_manager.RyuApp):
             src_sw, dst_sw = result[0], result[1]
             if dst_sw:
                 # Path has already calculated, just get it.
-                path = self.get_path(src_sw, dst_sw, weight=self.weight)
-                self.logger.info("[PATH]%s<-->%s: %s" % (ip_src, ip_dst, path))
+                paths = self.get_path(src_sw, dst_sw, weight=self.weight)
+                path_0, path_1 = paths[0], paths[1]
+                self.logger.info("[PATH]%s<-->%s: %s" % (ip_src, ip_dst, path_0))
                 flow_info = (eth_type, ip_src, ip_dst, in_port)
                 # install flow entries to datapath along side the path.
                 self.install_flow(self.datapaths,
                                   self.awareness.link_to_port,
-                                  self.awareness.access_table, path,
+                                  self.awareness.access_table, paths,
                                   flow_info, msg.buffer_id, msg.data)
         return
 
@@ -381,13 +478,20 @@ class ShortestForwarding(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        eth = pkt.get_protocol(ethernet.ethernet)
 
         if isinstance(arp_pkt, arp.arp):
+            print('\nARP: packet in switch', datapath.id, 'in_port:', in_port,
+                  'arp_src:', arp_pkt.src_ip, 'arp_dst:', arp_pkt.dst_ip)
+
             self.logger.debug("ARP processing")
             self.arp_forwarding(msg, arp_pkt.src_ip, arp_pkt.dst_ip)
 
         if isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IPV4 processing")
             if len(pkt.get_protocols(ethernet.ethernet)):
+                print('\nIPv4: packet in switch', datapath.id, 'in_port:', in_port,
+                         'src:', ip_pkt.src, 'dst:', ip_pkt.dst)
+                self.gid += 2
                 eth_type = pkt.get_protocols(ethernet.ethernet)[0].ethertype
                 self.shortest_forwarding(msg, eth_type, ip_pkt.src, ip_pkt.dst)

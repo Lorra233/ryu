@@ -36,6 +36,7 @@ from ryu.lib import hub
 from ryu.topology import event, switches
 from ryu.topology.api import get_switch, get_link
 import setting
+import time
 
 
 CONF = cfg.CONF
@@ -72,9 +73,16 @@ class NetworkAwareness(app_manager.RyuApp):
 
     def _discover(self):
         i = 0
+        j = 0
         while True:
             self.show_topology()
             if i == 5:
+                start = time.time()
+                j = j+1
+                if j == 1: 
+                    stop = time.time() - start
+                    j = 0
+                    print('topology 10*T :', stop, '\n')
                 self.get_topology(None)
                 i = 0
             hub.sleep(setting.DISCOVERY_PERIOD)
