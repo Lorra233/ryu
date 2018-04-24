@@ -115,18 +115,26 @@ class ShortestForwarding(app_manager.RyuApp):
             Build flow entry, and send it to datapath.
         """
         parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
         actions = []
         if group_id == 0:
             actions.append(parser.OFPActionOutput(dst_port))
         else:
             actions.append(parser.OFPActionGroup(group_id))
+        if src_port == 0:
+            match = parser.OFPMatch(
+                eth_type=flow_info[0],
+                ipv4_src=flow_info[1], ipv4_dst=flow_info[2])
 
-        match = parser.OFPMatch(
-            in_port=src_port, eth_type=flow_info[0],
-            ipv4_src=flow_info[1], ipv4_dst=flow_info[2])
+            self.add_flow(datapath, 1, match, actions,
+                          idle_timeout=0, hard_timeout=0)
+        else:
+            match = parser.OFPMatch(
+                in_port=src_port, eth_type=flow_info[0],
+                ipv4_src=flow_info[1], ipv4_dst=flow_info[2])
 
-        self.add_flow(datapath, 1, match, actions,
-                      idle_timeout=0, hard_timeout=0)
+            self.add_flow(datapath, 1, match, actions,
+                          idle_timeout=0, hard_timeout=0)
 
     def _build_packet_out(self, datapath, buffer_id, src_port, dst_port, data):
         """
@@ -284,14 +292,17 @@ class ShortestForwarding(app_manager.RyuApp):
 
         return src_sw, dst_sw
 
-    def send_group_mod(self, datapath, group_id_1, out_port_1, out_port_2):
+    def send_group_mod(self, datapath, group_id_1, out_port_1, out_port_2, watch_port_2=0):
         ofp = datapath.ofproto
         ofp_parser = datapath.ofproto_parser
 
         actions_1 = [ofp_parser.OFPActionOutput(out_port_1)]
         watch_port_1 = out_port_1
         actions_2 = [ofp_parser.OFPActionOutput(out_port_2)]
-        watch_port_2 = out_port_2
+        if watch_port_2 == 0:
+            watch_port_2 = out_port_2
+        else:
+            watch_port_2 = watch_port_2
  
         buckets = [ofp_parser.OFPBucket(watch_port=watch_port_1, watch_group=0,
                                         actions=actions_1), 
@@ -332,57 +343,68 @@ class ShortestForwarding(app_manager.RyuApp):
                 if port and port_next:
                     src_port, dst_port = port[1], port_next[0]
                     datapath = datapaths[path[i]]
-                    #self.send_group_mod(datapath, self.gid, dst_port, src_port)
-                    #self.send_group_mod(datapath, self.gid+1, src_port, dst_port)
-                    #self.send_flow_mod(datapath, flow_info, src_port, dst_port, self.gid)
-                    #self.send_flow_mod(datapath, back_info, dst_port, src_port, self.gid+1)
-                    
-                    self.send_flow_mod(datapath, flow_info, src_port, dst_port)
-                    self.send_flow_mod(datapath, back_info, dst_port, src_port)
+                    # forward
+                    self.send_group_mod(datapath, self.gid, dst_port, 
+                                        datapath.ofproto.OFPP_IN_PORT, src_port)
+                    self.send_flow_mod(datapath, flow_info, src_port, dst_port, 
+                                       self.gid)
+                    self.send_flow_mod(datapath, flow_info, dst_port, src_port)
+                    # backward
+                    self.send_group_mod(datapath, self.gid+1, src_port,
+                                        datapath.ofproto.OFPP_IN_PORT, dst_port)
+                    self.send_flow_mod(datapath, back_info, dst_port, src_port, 
+                                       self.gid+1)
+                    self.send_flow_mod(datapath, back_info, src_port, dst_port)
+
                     self.logger.debug("inter_link flow install")
         if len(path) > 1:
-            # the last flow entry: tor -> host
+            # ---the last flow entry: tor -> host
             port_pair = self.get_port_pair_from_link(link_to_port,
                                                      path[-2], path[-1])
+            port_pair_ = self.get_port_pair_from_link(link_to_port,
+                                                      path_[-2], path_[-1])
             if port_pair is None:
-                self.logger.info("Port is not found")
+                self.logger.info("Last_dp port_pair is not found")
+                if port_pair_ is None:
+                    self.logger.info("Last_dp bpport_pair is not found")
                 return
-            src_port = port_pair[1]
 
+            src_port = port_pair[1]
+            bp_port = port_pair_[1]
             dst_port = self.get_port(flow_info[2], access_table)
             if dst_port is None:
                 self.logger.info("Last port is not found.")
                 return
-            port_pair_ = self.get_port_pair_from_link(link_to_port,
-                                                      path_[-2], path_[-1])
-            bp_port = port_pair_[1]
             last_dp = datapaths[path[-1]]
-            #self.send_group_mod(last_dp, self.gid, dst_port, src_port)
-            self.send_group_mod(last_dp, self.gid + 1, src_port, bp_port)
-            #self.send_flow_mod(last_dp, flow_info, src_port, dst_port, self.gid)
-            self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid+1)
+                # forward
+            self.send_flow_mod(last_dp, flow_info, 0, dst_port)
+                # backward
+            self.send_group_mod(last_dp, self.gid, src_port, bp_port)
+            self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
+                # match return packets
+            self.send_flow_mod(last_dp, back_info, src_port, bp_port)
 
-            self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
-            #self.send_flow_mod(last_dp, back_info, dst_port, src_port)
-
-
-            # the first flow entry
+            # ---the first flow entry
             port_pair = self.get_port_pair_from_link(link_to_port,
                                                      path[0], path[1])
-            if port_pair is None:
-                self.logger.info("Port not found in first hop.")
-                return
-            out_port = port_pair[0]
             port_pair_ = self.get_port_pair_from_link(link_to_port,
                                                       path_[0], path_[1])
+            if port_pair is None:
+                self.logger.info("First_dp port_pair is not found")
+                if port_pair_ is None:
+                    self.logger.info("First_dp bpport_pair is not found")
+                return
             bp_port = port_pair_[0]
+            out_port = port_pair[0]
+                 # forward   
             self.send_group_mod(first_dp, self.gid, out_port, bp_port)
-            #self.send_group_mod(first_dp, self.gid+1, in_port, out_port)
             self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
-            #self.send_flow_mod(first_dp, back_info, out_port, in_port, self.gid+1)
+                 # backward
+            self.send_flow_mod(first_dp, back_info, 0, in_port)
+                # match return packets
+            self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
 
-            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-            self.send_flow_mod(first_dp, back_info, out_port, in_port)
+
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
 
         # src and dst on the same datapath
@@ -392,8 +414,8 @@ class ShortestForwarding(app_manager.RyuApp):
                 self.logger.info("Out_port is None in same dp")
                 return
             print('src and dst on the same datapath.\n')
-            self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-            self.send_flow_mod(first_dp, back_info, out_port, in_port)
+            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+            #self.send_flow_mod(first_dp, back_info, out_port, in_port)
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
 
         #---- backup path install 
@@ -410,35 +432,35 @@ class ShortestForwarding(app_manager.RyuApp):
                     self.send_flow_mod(datapath, back_info, dst_port, src_port)
                     self.logger.debug("inter_link of bp flow install")
 
-        if len(path_) > 1:
-            port_pair = self.get_port_pair_from_link(link_to_port,
-                                                     path_[-2], path_[-1])
-            if port_pair is None:
-                self.logger.info("BP: port is not found")
-                return
-            src_port = port_pair[1]
-            dst_port = self.get_port(flow_info[2], access_table)
-            if dst_port is None:
-                self.logger.info("BP: last port is not found.")
-                return
-            last_dp = datapaths[path_[-1]]
-            self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
-            
-            port_pair = self.get_port_pair_from_link(link_to_port,
-                                                     path_[0], path_[1])
-            if port_pair is None:
-                self.logger.info("BP: port not found in first hop.")
-                return
-            out_port = port_pair[0]
-            self.send_flow_mod(first_dp, back_info, out_port, in_port)
-            
-        else:
-            out_port = self.get_port(flow_info[2], access_table)
-            if out_port is None:
-                self.logger.info("BP: out_port is None in same dp.")
-                return
-            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-            #self.send_flow_mod(first_dp, back_info, out_port, in_port)
+        #if len(path_) > 1:
+        #    port_pair = self.get_port_pair_from_link(link_to_port,
+        #                                             path_[-2], path_[-1])
+        #    if port_pair is None:
+        #        self.logger.info("BP: port is not found")
+        #        return
+        #    src_port = port_pair[1]
+        #    dst_port = self.get_port(flow_info[2], access_table)
+        #    if dst_port is None:
+        #        self.logger.info("BP: last port is not found.")
+        #        return
+        #    last_dp = datapaths[path_[-1]]
+        #    self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
+        #    
+        #    port_pair = self.get_port_pair_from_link(link_to_port,
+        #                                             path_[0], path_[1])
+        #    if port_pair is None:
+        #        self.logger.info("BP: port not found in first hop.")
+        #        return
+        #    out_port = port_pair[0]
+        #    self.send_flow_mod(first_dp, back_info, out_port, in_port)
+        #    
+        #else:
+        #    out_port = self.get_port(flow_info[2], access_table)
+        #    if out_port is None:
+        #        self.logger.info("BP: out_port is None in same dp.")
+        #        return
+        #    #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+        #    #self.send_flow_mod(first_dp, back_info, out_port, in_port)
 
     def shortest_forwarding(self, msg, eth_type, ip_src, ip_dst):
         """
@@ -458,6 +480,7 @@ class ShortestForwarding(app_manager.RyuApp):
                 paths = self.get_path(src_sw, dst_sw, weight=self.weight)
                 path_0, path_1 = paths[0], paths[1]
                 self.logger.info("[PATH]%s<-->%s: %s" % (ip_src, ip_dst, path_0))
+                self.logger.info('gid%s' % self.gid)
                 flow_info = (eth_type, ip_src, ip_dst, in_port)
                 # install flow entries to datapath along side the path.
                 self.install_flow(self.datapaths,
