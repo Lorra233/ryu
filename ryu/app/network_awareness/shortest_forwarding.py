@@ -322,8 +322,10 @@ class ShortestForwarding(app_manager.RyuApp):
             @parameter: path=[dpid1, dpid2...]
                         flow_info=(eth_type, src_ip, dst_ip, in_port)
         '''
-        path, path_ = paths[0], paths[1]
-
+        if len(paths) > 1:
+            path, path_ = paths[0], paths[1]
+        else:
+            path = paths[0]
         #------ working path install
         if path is None or len(path) == 0:
             self.logger.info("Path error!")
@@ -361,8 +363,7 @@ class ShortestForwarding(app_manager.RyuApp):
             # ---the last flow entry: tor -> host
             port_pair = self.get_port_pair_from_link(link_to_port,
                                                      path[-2], path[-1])
-            port_pair_ = self.get_port_pair_from_link(link_to_port,
-                                                      path_[-2], path_[-1])
+
             if port_pair is None:
                 self.logger.info("Last_dp port_pair is not found")
                 if port_pair_ is None:
@@ -370,39 +371,46 @@ class ShortestForwarding(app_manager.RyuApp):
                 return
 
             src_port = port_pair[1]
-            bp_port = port_pair_[1]
             dst_port = self.get_port(flow_info[2], access_table)
             if dst_port is None:
                 self.logger.info("Last port is not found.")
                 return
             last_dp = datapaths[path[-1]]
+            if len(paths) > 1:
+                port_pair_ = self.get_port_pair_from_link(link_to_port,
+                                                      path_[-2], path_[-1])
+                bp_port = port_pair_[1]
+                # backward
+                self.send_group_mod(last_dp, self.gid, src_port, bp_port)
+                # match return packets
+                self.send_flow_mod(last_dp, back_info, src_port, bp_port)
+
                 # forward
             self.send_flow_mod(last_dp, flow_info, 0, dst_port)
                 # backward
-            self.send_group_mod(last_dp, self.gid, src_port, bp_port)
             self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
-                # match return packets
-            self.send_flow_mod(last_dp, back_info, src_port, bp_port)
 
             # ---the first flow entry
             port_pair = self.get_port_pair_from_link(link_to_port,
                                                      path[0], path[1])
-            port_pair_ = self.get_port_pair_from_link(link_to_port,
-                                                      path_[0], path_[1])
             if port_pair is None:
                 self.logger.info("First_dp port_pair is not found")
                 if port_pair_ is None:
                     self.logger.info("First_dp bpport_pair is not found")
                 return
-            bp_port = port_pair_[0]
             out_port = port_pair[0]
+            if len(paths) > 1:
+                port_pair_ = self.get_port_pair_from_link(link_to_port,
+                                                          path_[0], path_[1])
+                bp_port = port_pair_[0]
+                     # forward   
+                self.send_group_mod(first_dp, self.gid, out_port, bp_port)
+                     # match return packets
+                self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
                  # forward   
-            self.send_group_mod(first_dp, self.gid, out_port, bp_port)
             self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
                  # backward
             self.send_flow_mod(first_dp, back_info, 0, in_port)
-                # match return packets
-            self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
 
 
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
@@ -418,19 +426,20 @@ class ShortestForwarding(app_manager.RyuApp):
             #self.send_flow_mod(first_dp, back_info, out_port, in_port)
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
 
-        #---- backup path install 
-        if len(path_) > 2:
-            for i in range(1, len(path_)-1):
-                port = self.get_port_pair_from_link(link_to_port,
-                                                    path_[i-1], path_[i])
-                port_next = self.get_port_pair_from_link(link_to_port,
-                                                         path_[i], path_[i+1])
-                if port and port_next:
-                    src_port, dst_port = port[1], port_next[0]
-                    datapath = datapaths[path_[i]]
-                    self.send_flow_mod(datapath, flow_info, src_port, dst_port)
-                    self.send_flow_mod(datapath, back_info, dst_port, src_port)
-                    self.logger.debug("inter_link of bp flow install")
+        if len(paths) > 1:
+            #---- backup path install 
+            if len(path_) > 2:
+                for i in range(1, len(path_)-1):
+                    port = self.get_port_pair_from_link(link_to_port,
+                                                        path_[i-1], path_[i])
+                    port_next = self.get_port_pair_from_link(link_to_port,
+                                                             path_[i], path_[i+1])
+                    if port and port_next:
+                        src_port, dst_port = port[1], port_next[0]
+                        datapath = datapaths[path_[i]]
+                        self.send_flow_mod(datapath, flow_info, src_port, dst_port)
+                        self.send_flow_mod(datapath, back_info, dst_port, src_port)
+                        self.logger.debug("inter_link of bp flow install")
 
         #if len(path_) > 1:
         #    port_pair = self.get_port_pair_from_link(link_to_port,
@@ -478,7 +487,7 @@ class ShortestForwarding(app_manager.RyuApp):
             if dst_sw:
                 # Path has already calculated, just get it.
                 paths = self.get_path(src_sw, dst_sw, weight=self.weight)
-                path_0, path_1 = paths[0], paths[1]
+                path_0 = paths[0]
                 self.logger.info("[PATH]%s<-->%s: %s" % (ip_src, ip_dst, path_0))
                 self.logger.info('gid%s' % self.gid)
                 flow_info = (eth_type, ip_src, ip_dst, in_port)
