@@ -146,6 +146,7 @@ class NetworkAwareness(app_manager.RyuApp):
                     self.graph.add_edge(src, dst, weight=0)
                 elif (src, dst) in link_list:
                     self.graph.add_edge(src, dst, weight=1)
+        print('Graph.edges:', self.graph.edges)
         return self.graph
 
     def create_port_map(self, switch_list):
@@ -168,11 +169,13 @@ class NetworkAwareness(app_manager.RyuApp):
         """
         self.link_to_port.clear()
         for link in link_list:
-            #self.logger.info(link)
+            print('\nlink in links:\n', link)
             src = link.src
             dst = link.dst
             self.link_to_port[
                 (src.dpid, dst.dpid)] = (src.port_no, dst.port_no)
+            #self.link_to_port[
+            #    (dst.dpid, src.dpid)] = (dst.port_no, src.port_no)
 
             # Find the access ports and interiorior ports
             if link.src.dpid in self.switches:
@@ -238,17 +241,17 @@ class NetworkAwareness(app_manager.RyuApp):
         """
         switch_list = get_switch(self.topology_api_app, None)
         self.create_port_map(switch_list)
-        #print('switch_port_table:', self.switch_port_table, '\n')
+        print('switch_port_table:', self.switch_port_table, '\n')
         self.switches = self.switch_port_table.keys()
         #print('self.switches:', self.switches, '\n')
         links = get_link(self.topology_api_app, None)
         self.create_interior_links(links)
-        #print('\n','link_to_port:', self.link_to_port, '\n')
-        #print('interior_ports:', self.interior_ports, '\n')
+        print('\n','link_to_port:', self.link_to_port, '\n')
+        print('interior_ports:', self.interior_ports, '\n')
         self.create_access_ports()
-        #print('access_ports:', self.access_ports, '\n')
+        print('access_ports:', self.access_ports, '\n')
         self.get_graph(self.link_to_port.keys())
-        #print('graph.nodes:', self.graph.nodes(), '\n')
+        print('graph.nodes:', self.graph.nodes(), '\n')
         self.shortest_paths = self.all_k_shortest_paths(
             self.graph, weight='weight', k=CONF.k_paths)
         print('self.shortest_paths:', self.shortest_paths, '\n------')

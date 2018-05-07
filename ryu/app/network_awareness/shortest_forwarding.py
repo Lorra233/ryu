@@ -22,7 +22,7 @@ from operator import attrgetter
 from ryu import cfg
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER, HANDSHAKE_DISPATCHER
 from ryu.controller.handler import CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
@@ -357,6 +357,8 @@ class ShortestForwarding(app_manager.RyuApp):
                     self.send_flow_mod(datapath, back_info, dst_port, src_port, 
                                        self.gid+1)
                     self.send_flow_mod(datapath, back_info, src_port, dst_port)
+                    print('\nINSTLL inter sw:\n', datapath.id)
+
 
                     self.logger.debug("inter_link flow install")
         if len(path) > 1:
@@ -382,13 +384,18 @@ class ShortestForwarding(app_manager.RyuApp):
                 bp_port = port_pair_[1]
                 # backward
                 self.send_group_mod(last_dp, self.gid, src_port, bp_port)
+                self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
                 # match return packets
                 self.send_flow_mod(last_dp, back_info, src_port, bp_port)
+                # forward
+                self.send_flow_mod(last_dp, flow_info, bp_port, dst_port)
+            else:
+                # backward
+                self.send_flow_mod(last_dp, back_info, dst_port, src_port)
 
                 # forward
-            self.send_flow_mod(last_dp, flow_info, 0, dst_port)
-                # backward
-            self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
+            self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
+            print('\nINSTALL last_sw:\n', last_dp.id)
 
             # ---the first flow entry
             port_pair = self.get_port_pair_from_link(link_to_port,
@@ -405,13 +412,18 @@ class ShortestForwarding(app_manager.RyuApp):
                 bp_port = port_pair_[0]
                      # forward   
                 self.send_group_mod(first_dp, self.gid, out_port, bp_port)
+                self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
                      # match return packets
                 self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
-                 # forward   
-            self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
-                 # backward
-            self.send_flow_mod(first_dp, back_info, 0, in_port)
+                     # backward
+                self.send_flow_mod(first_dp, back_info, bp_port, in_port)
 
+            else:
+                     # forward   
+                self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+            # backward
+            self.send_flow_mod(first_dp, back_info, out_port, in_port)
+            print('\nINSTALL first_sw:\n', first_dp.id)
 
             self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
 
@@ -440,6 +452,7 @@ class ShortestForwarding(app_manager.RyuApp):
                         self.send_flow_mod(datapath, flow_info, src_port, dst_port)
                         self.send_flow_mod(datapath, back_info, dst_port, src_port)
                         self.logger.debug("inter_link of bp flow install")
+                    print('\nINSTALL bp_sw:', datapath.id)
 
         #if len(path_) > 1:
         #    port_pair = self.get_port_pair_from_link(link_to_port,
@@ -487,6 +500,7 @@ class ShortestForwarding(app_manager.RyuApp):
             if dst_sw:
                 # Path has already calculated, just get it.
                 paths = self.get_path(src_sw, dst_sw, weight=self.weight)
+                print('paths', paths)
                 path_0 = paths[0]
                 self.logger.info("[PATH]%s<-->%s: %s" % (ip_src, ip_dst, path_0))
                 self.logger.info('gid%s' % self.gid)
@@ -521,9 +535,25 @@ class ShortestForwarding(app_manager.RyuApp):
 
         if isinstance(ip_pkt, ipv4.ipv4):
             self.logger.debug("IPV4 processing")
+            in_port = msg.match['in_port']
+            if(ip_pkt.src == '10.0.0.3'):
+                print('\n******in_port:\n', in_port)
+
             if len(pkt.get_protocols(ethernet.ethernet)):
                 print('\nIPv4: packet in switch', datapath.id, 'in_port:', in_port,
                          'src:', ip_pkt.src, 'dst:', ip_pkt.dst)
                 self.gid += 2
                 eth_type = pkt.get_protocols(ethernet.ethernet)[0].ethertype
                 self.shortest_forwarding(msg, eth_type, ip_pkt.src, ip_pkt.dst)
+
+    @set_ev_cls(ofp_event.EventOFPErrorMsg, [HANDSHAKE_DISPATCHER, 
+                                             MAIN_DISPATCHER, CONFIG_DISPATCHER])
+    def _error_msg_handler(self, ev):
+        msg = ev.msg
+        dpid = msg.datapath.id
+        err_type = int(msg.type)
+        err_code = int(msg.code)
+        print('error_msg:', dpid,err_type, err_code)
+
+
+
