@@ -37,6 +37,8 @@ from ryu.topology import event, switches
 from ryu.topology.api import get_switch, get_link
 import setting
 import time
+import find_circle as fc
+from collections import defaultdict
 
 
 CONF = cfg.CONF
@@ -67,6 +69,8 @@ class NetworkAwareness(app_manager.RyuApp):
         self.pre_access_table = {}
         self.pre_link_to_port = {}
         self.shortest_paths = None
+        self.udgraph = {}
+        self.cir_cnt = 0
 
         # Start a green thread to discover network resource.
         self.discover_thread = hub.spawn(self._discover)
@@ -148,6 +152,16 @@ class NetworkAwareness(app_manager.RyuApp):
                     self.graph.add_edge(src, dst, weight=1)
         print('Graph.edges:', self.graph.edges)
         return self.graph
+
+    def get_udgraph(self, link_list):
+        # Get Adjacency dict of undirected graph from link_to_port
+        self.udgraph = defaultdict(set)
+        for src in self.switches:
+            for dst in self.switches:
+                if (src, dst) in link_list:
+                    self.udgraph[src].add(dst)
+        print('\n*****udgraph:\n', self.udgraph)
+
 
     def create_port_map(self, switch_list):
         """
@@ -252,6 +266,9 @@ class NetworkAwareness(app_manager.RyuApp):
         print('access_ports:', self.access_ports, '\n')
         self.get_graph(self.link_to_port.keys())
         print('graph.nodes:', self.graph.nodes(), '\n')
+        self.get_udgraph(self.link_to_port.keys())
+        self.cir_cnt = fc.find_all_cirs(self.udgraph, len(switch_list))
+        print (self.cir_cnt)
         self.shortest_paths = self.all_k_shortest_paths(
             self.graph, weight='weight', k=CONF.k_paths)
         print('self.shortest_paths:', self.shortest_paths, '\n------')
