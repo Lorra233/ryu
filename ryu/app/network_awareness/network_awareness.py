@@ -71,6 +71,7 @@ class NetworkAwareness(app_manager.RyuApp):
         self.shortest_paths = None
         self.udgraph = {}
         self.cir_cnt = 0
+        self.cir_list = []
 
         # Start a green thread to discover network resource.
         self.discover_thread = hub.spawn(self._discover)
@@ -150,7 +151,7 @@ class NetworkAwareness(app_manager.RyuApp):
                     self.graph.add_edge(src, dst, weight=0)
                 elif (src, dst) in link_list:
                     self.graph.add_edge(src, dst, weight=1)
-        print('Graph.edges:', self.graph.edges)
+        #print('Graph.edges:', self.graph.edges)
         return self.graph
 
     def get_udgraph(self, link_list):
@@ -160,7 +161,7 @@ class NetworkAwareness(app_manager.RyuApp):
             for dst in self.switches:
                 if (src, dst) in link_list:
                     self.udgraph[src].add(dst)
-        print('\n*****udgraph:\n', self.udgraph)
+        #print('\n*****udgraph:\n', self.udgraph)
 
 
     def create_port_map(self, switch_list):
@@ -183,7 +184,7 @@ class NetworkAwareness(app_manager.RyuApp):
         """
         self.link_to_port.clear()
         for link in link_list:
-            print('\nlink in links:\n', link)
+            #print('\nlink in links:\n', link)
             src = link.src
             dst = link.dst
             self.link_to_port[
@@ -255,23 +256,23 @@ class NetworkAwareness(app_manager.RyuApp):
         """
         switch_list = get_switch(self.topology_api_app, None)
         self.create_port_map(switch_list)
-        print('switch_port_table:', self.switch_port_table, '\n')
+        #print('switch_port_table:', self.switch_port_table, '\n')
         self.switches = self.switch_port_table.keys()
         #print('self.switches:', self.switches, '\n')
         links = get_link(self.topology_api_app, None)
         self.create_interior_links(links)
         print('\n','link_to_port:', self.link_to_port, '\n')
-        print('interior_ports:', self.interior_ports, '\n')
+        #print('interior_ports:', self.interior_ports, '\n')
         self.create_access_ports()
-        print('access_ports:', self.access_ports, '\n')
+        #print('access_ports:', self.access_ports, '\n')
         self.get_graph(self.link_to_port.keys())
-        print('graph.nodes:', self.graph.nodes(), '\n')
+        #print('graph.nodes:', self.graph.nodes(), '\n')
         self.get_udgraph(self.link_to_port.keys())
-        self.cir_cnt = fc.find_all_cirs(self.udgraph, len(switch_list))
-        print (self.cir_cnt)
+        self.cir_cnt = fc.find_all_cirs(self.udgraph, len(switch_list), self.cir_list)
+        print ('\noooooo     all_circles:\n', self.cir_list)
         self.shortest_paths = self.all_k_shortest_paths(
             self.graph, weight='weight', k=CONF.k_paths)
-        print('self.shortest_paths:', self.shortest_paths, '\n------')
+        #print('self.shortest_paths:', self.shortest_paths, '\n------')
 
     def register_access_info(self, dpid, in_port, ip, mac):
         """

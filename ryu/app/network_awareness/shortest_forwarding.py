@@ -315,8 +315,8 @@ class ShortestForwarding(app_manager.RyuApp):
         datapath.send_msg(req)
 
 
-    def install_flow(self, datapaths, link_to_port, access_table, paths,
-                     flow_info, buffer_id, data=None):
+    def install_flow(self, datapaths, link_to_port, cir_list, access_table,
+                     paths, flow_info, buffer_id, data=None):
         ''' 
             Install flow entires for roundtrip: go and back.
             @parameter: path=[dpid1, dpid2...]
@@ -335,154 +335,235 @@ class ShortestForwarding(app_manager.RyuApp):
         out_port = first_dp.ofproto.OFPP_LOCAL
         back_info = (flow_info[0], flow_info[2], flow_info[1])
 
-        # inter_link
-        if len(path) > 2:
-            for i in range(1, len(path)-1):
-                port = self.get_port_pair_from_link(link_to_port,
-                                                    path[i-1], path[i])
-                port_next = self.get_port_pair_from_link(link_to_port,
-                                                         path[i], path[i+1])
-                if port and port_next:
-                    src_port, dst_port = port[1], port_next[0]
-                    datapath = datapaths[path[i]]
-                    # forward
-                    self.send_group_mod(datapath, self.gid, dst_port, 
-                                        datapath.ofproto.OFPP_IN_PORT, src_port)
-                    self.send_flow_mod(datapath, flow_info, src_port, dst_port, 
-                                       self.gid)
-                    self.send_flow_mod(datapath, flow_info, dst_port, src_port)
-                    # backward
-                    self.send_group_mod(datapath, self.gid+1, src_port,
-                                        datapath.ofproto.OFPP_IN_PORT, dst_port)
-                    self.send_flow_mod(datapath, back_info, dst_port, src_port, 
-                                       self.gid+1)
-                    self.send_flow_mod(datapath, back_info, src_port, dst_port)
-                    print('\nINSTLL inter sw:\n', datapath.id)
+        ###~~~~new~~~~~
+        b = 0
+        len_cir = len(cir_list)
+        len_pa = len(path)
+        path_cir = []
+        cir_cnt = 0
+        cir_dir = []   # -1 means anticlockwise
 
-
-                    self.logger.debug("inter_link flow install")
-        if len(path) > 1:
-            # ---the last flow entry: tor -> host
-            port_pair = self.get_port_pair_from_link(link_to_port,
-                                                     path[-2], path[-1])
-
-            if port_pair is None:
-                self.logger.info("Last_dp port_pair is not found")
-                if port_pair_ is None:
-                    self.logger.info("Last_dp bpport_pair is not found")
-                return
-
-            src_port = port_pair[1]
-            dst_port = self.get_port(flow_info[2], access_table)
-            if dst_port is None:
-                self.logger.info("Last port is not found.")
-                return
-            last_dp = datapaths[path[-1]]
-            if len(paths) > 1:
-                port_pair_ = self.get_port_pair_from_link(link_to_port,
-                                                      path_[-2], path_[-1])
-                bp_port = port_pair_[1]
-                # backward
+        ##------first_dp-----------
+        port_pair = self.get_port_pair_from_link(link_to_port,
+					         path[0], path[1])
+        out_port = port_pair[0]
+                # backward_wildcard
+        self.send_flow_mod(first_dp, back_info, 0, in_port)
+        for j in range(len_cir):
+            if path[0] in cir_list[j] and path[1] in cir_list[j]:
+                p = cir_list[j].index(path[0])
+                try:
+                    if path[1] == cir_list[j][p+1]:
+                        bp = cir_list[j][p-1]
+                        cir_dir.append(-1)
+                    else:
+                        bp = cir_list[j][p+1]
+                        cir_dir[0] = 1
+                except IndexError:
+                    if path[1] == cir_list[j][0]:
+                        bp = cir_list[j][p-1]
+                        cir_dir.append(1)
+                    else:
+                        bp = cir_list[j][0]
+                        cir_dir[0] = 1
+                port_pair = self.get_port_pair_from_link(link_to_port,
+                                                         path[0], bp)
+                bp_port = port_pair[0]
+                # forward_ffg
+                self.send_group_mod(first_dp, self.gid, out_port, bp_port)
+                self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
+                # match return packets
+                self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
+                path_cir.append(cir_list[j])
+                cir_cnt = 1
+                b = 1
+                break
+            # forward_no_bp 
+        if b == 0:
+            self.send_flow_mod(first_dp, flow_info, in_port, out_port)
+        b = 0
+           
+        ##------last_dp-----------
+        last_dp = datapaths[path[-1]]
+        port_pair = self.get_port_pair_from_link(link_to_port,
+                                             path[-2], path[-1])
+        src_port = port_pair[1]
+        dst_port = self.get_port(flow_info[2], access_table)
+                # forkward_wildcard
+        self.send_flow_mod(last_dp, flow_info, 0, dst_port)
+        for j in range(len_cir):
+            if path[-2] in cir_list[j] and path[-1] in cir_list[j]:
+                p = cir_list[j].index(path[-1])
+                try:
+                    if path[-2] == cir_list[j][p+1]:
+                        bp = cir_list[j][p-1]
+                    else:
+                        bp = cir_list[j][p+1]
+                except IndexError:
+                    if path[-2] == cir_list[j][0]:
+                        bp = cir_list[j][p-1]
+                    else:
+                        bp = cir_list[j][0]
+                port_pair = self.get_port_pair_from_link(link_to_port,
+                                                         path[-1], bp)
+                bp_port = port_pair[1]
+                # backward_ffg
                 self.send_group_mod(last_dp, self.gid, src_port, bp_port)
                 self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
                 # match return packets
                 self.send_flow_mod(last_dp, back_info, src_port, bp_port)
-                # forward
-                self.send_flow_mod(last_dp, flow_info, bp_port, dst_port)
-            else:
-                # backward
-                self.send_flow_mod(last_dp, back_info, dst_port, src_port)
+                if cir_list[j] in path_cir:
+                    pass
+                else:
+                    path_cir.append(cir_list[j])
+                    cir_cnt += 1
+                    if path[-2] == cir_list[j][p-1]:
+                        cir_dir.append(-1)
+                    else:
+                        cir_dir.append(1)
+                b = 1
+                break
+            # forward_no_bp 
+        if b == 0:
+            self.send_flow_mod(last_dp, back_info, dst_port, src_port)
+        b = 0
 
-                # forward
-            self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
-            print('\nINSTALL last_sw:\n', last_dp.id)
-
-            # ---the first flow entry
-            port_pair = self.get_port_pair_from_link(link_to_port,
-                                                     path[0], path[1])
-            if port_pair is None:
-                self.logger.info("First_dp port_pair is not found")
-                if port_pair_ is None:
-                    self.logger.info("First_dp bpport_pair is not found")
-                return
-            out_port = port_pair[0]
-            if len(paths) > 1:
-                port_pair_ = self.get_port_pair_from_link(link_to_port,
-                                                          path_[0], path_[1])
-                bp_port = port_pair_[0]
-                     # forward   
-                self.send_group_mod(first_dp, self.gid, out_port, bp_port)
-                self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
-                     # match return packets
-                self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
-                     # backward
-                self.send_flow_mod(first_dp, back_info, bp_port, in_port)
-
-            else:
-                     # forward   
-                self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-            # backward
-            self.send_flow_mod(first_dp, back_info, out_port, in_port)
-            print('\nINSTALL first_sw:\n', first_dp.id)
-
-            self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
-
-        # src and dst on the same datapath
-        else:
-            out_port = self.get_port(flow_info[2], access_table)
-            if out_port is None:
-                self.logger.info("Out_port is None in same dp")
-                return
-            print('src and dst on the same datapath.\n')
-            #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-            #self.send_flow_mod(first_dp, back_info, out_port, in_port)
-            self.send_packet_out(first_dp, buffer_id, in_port, out_port, data)
-
-        if len(paths) > 1:
-            #---- backup path install 
-            if len(path_) > 2:
-                for i in range(1, len(path_)-1):
-                    port = self.get_port_pair_from_link(link_to_port,
-                                                        path_[i-1], path_[i])
+        ##-------inter_dp----------
+        if len_pa > 2:
+            for i in range(1, len_pa-1):
+                for j in range(len_cir):
+                    datapath = datapaths[path[i]]
+                    port_pair = self.get_port_pair_from_link(link_to_port,
+                                                       path[i-1], path[i])
                     port_next = self.get_port_pair_from_link(link_to_port,
-                                                             path_[i], path_[i+1])
+                                                       path[i], path[i+1])
+                    src_port, dst_port = port_pair[1], port_next[0]
+                    if path[i] in cir_list[j]:
+                        p = cir_list[j].index(path[i])
+                        if path[i-1] not in cir_list[j] and path[i+1] in cir_list[j]:
+                            try:
+                                if path[i+1] == cir_list[j][p+1]:
+                                    bp = cir_list[j][p-1]
+                                else:
+                                    bp = cir_list[j][p+1]
+                            except IndexError:
+                                if path[i+1] == cir_list[j][0]:
+                                    bp = cir_list[j][p-1]
+                                else:
+                                    bp = cir_list[j][0]
+                            
+                            bp_port = self.get_port_pair_from_link(link_to_port,
+                                                                    path[i], bp)[0]
+                            print('inter_dp, p, bp,bp_port:', path[i], p,  bp, bp_port)
+                            # forward_ffg
+                            self.send_group_mod(datapath, self.gid, dst_port, bp_port)
+                            self.send_flow_mod(datapath, flow_info, src_port, dst_port,
+                                               self.gid)
+                            # match return packets
+                            self.send_flow_mod(datapath, flow_info, dst_port, bp_port)
+                            # backward_wildcard
+                            self.send_flow_mod(datapath, back_info, 0, src_port)
+                            if cir_list[j] in path_cir:
+                                pass
+                            else:
+                                path_cir.append(cir_list[j])
+                                cir_cnt += 1
+                                if path[i+1] == cir_list[j][p+1]:
+                                    cir_dir.append(-1)
+                                else:
+                                    cir_dir.append(1)
+                            break
+                        elif path[i-1] in cir_list[j] and path[i+1] in cir_list[j]:
+                            # forward_ffg
+                            self.send_group_mod(datapath, self.gid, dst_port,
+                                                datapath.ofproto.OFPP_IN_PORT, src_port)
+                            self.send_flow_mod(datapath, flow_info, src_port, dst_port,
+                                               self.gid)
+                              # match return packets
+                            self.send_flow_mod(datapath, flow_info, dst_port, src_port)
+                            # backward_ffg
+                            self.send_group_mod(datapath, self.gid+1, src_port,
+                                                datapath.ofproto.OFPP_IN_PORT, dst_port)
+                            self.send_flow_mod(datapath, back_info, dst_port, src_port,
+                                               self.gid+1)
+                              # match return packets
+                            self.send_flow_mod(datapath, back_info, src_port, dst_port)
+                            if cir_list[j] in path_cir:
+                                pass
+                            else:
+                                path_cir.append(cir_list[j])
+                                cir_cnt += 1
+                                if path[i-1] == cir_list[j][p-1]:
+                                    cir_dir.append(-1)
+                                else:
+                                    cir_dir.append(1)
+                            break
+                        elif path[i-1] in cir_list[j] and path[i+1] not in cir_list[j]:
+                            try:
+                                if path[i-1] == cir_list[j][p+1]:
+                                    bp = cir_list[j][p-1]
+                                else:
+                                    bp = cir_list[j][p+1]
+                            except IndexError:
+                                if path[i-1] == cir_list[j][0]:
+                                    bp = cir_list[j][p-1]
+                                else:
+                                    bp = cir_list[j][0]
+                            bp_port = self.get_port_pair_from_link(link_to_port,
+                                                                    path[i], bp)[0]
+                            # forward_wildcard
+                            self.send_flow_mod(datapath, flow_info, 0, dst_port)
+                            # backward_ffg
+                            self.send_group_mod(datapath, self.gid, src_port, bp_port)
+                            self.send_flow_mod(datapath, back_info, dst_port, src_port,
+                                               self.gid)
+                              # match return packets
+                            self.send_flow_mod(datapath, back_info, src_port, bp_port)
+                            if cir_list[j] in path_cir:
+                                pass
+                            else:
+                                path_cir.append(cir_list[j])
+                                cir_cnt += 1
+                                if path[i-1] == cir_list[j][p-1]:
+                                    cir_dir.append(-1)
+                                else:
+                                    cir_dir.append(1)
+                            break
+                        elif path[i-1] not in cir_list[j] and path[i+1] not in cir_list[j]:
+                            self.send_flow_mod(datapath, flow_info, src_port, dst_port)
+                            self.send_flow_mod(datapath, back_info, dst_port, src_port)
+                            break
+
+
+        ##--------bp_dp---------------
+        print('\npath_cir:\n', path_cir)
+        for j in range(len(path_cir)):
+            for i in path_cir[j]:
+                if i in path:
+                    pass
+                else:
+                    p = path_cir[j].index(i)
+                    #print('i:', i)
+                    try:
+                        port = self.get_port_pair_from_link(link_to_port,
+                                                   path_cir[j][p-cir_dir[j]], path_cir[j][p])
+                    except IndexError:
+                        port = self.get_port_pair_from_link(link_to_port,
+                                                   path_cir[j][0], path_cir[j][p])
+                    try:
+                        port_next = self.get_port_pair_from_link(link_to_port,
+                                                   path_cir[j][p], path_cir[j][p+cir_dir[j]])
+                    except IndexError:
+                        port_next = self.get_port_pair_from_link(link_to_port,
+                                                   path_cir[i][p], path_cir[j][0])
+
                     if port and port_next:
                         src_port, dst_port = port[1], port_next[0]
-                        datapath = datapaths[path_[i]]
+                        datapath = datapaths[path_cir[j][p]]
                         self.send_flow_mod(datapath, flow_info, src_port, dst_port)
                         self.send_flow_mod(datapath, back_info, dst_port, src_port)
                         self.logger.debug("inter_link of bp flow install")
-                    print('\nINSTALL bp_sw:', datapath.id)
 
-        #if len(path_) > 1:
-        #    port_pair = self.get_port_pair_from_link(link_to_port,
-        #                                             path_[-2], path_[-1])
-        #    if port_pair is None:
-        #        self.logger.info("BP: port is not found")
-        #        return
-        #    src_port = port_pair[1]
-        #    dst_port = self.get_port(flow_info[2], access_table)
-        #    if dst_port is None:
-        #        self.logger.info("BP: last port is not found.")
-        #        return
-        #    last_dp = datapaths[path_[-1]]
-        #    self.send_flow_mod(last_dp, flow_info, src_port, dst_port)
-        #    
-        #    port_pair = self.get_port_pair_from_link(link_to_port,
-        #                                             path_[0], path_[1])
-        #    if port_pair is None:
-        #        self.logger.info("BP: port not found in first hop.")
-        #        return
-        #    out_port = port_pair[0]
-        #    self.send_flow_mod(first_dp, back_info, out_port, in_port)
-        #    
-        #else:
-        #    out_port = self.get_port(flow_info[2], access_table)
-        #    if out_port is None:
-        #        self.logger.info("BP: out_port is None in same dp.")
-        #        return
-        #    #self.send_flow_mod(first_dp, flow_info, in_port, out_port)
-        #    #self.send_flow_mod(first_dp, back_info, out_port, in_port)
 
     def shortest_forwarding(self, msg, eth_type, ip_src, ip_dst):
         """
@@ -508,6 +589,7 @@ class ShortestForwarding(app_manager.RyuApp):
                 # install flow entries to datapath along side the path.
                 self.install_flow(self.datapaths,
                                   self.awareness.link_to_port,
+                                  self.awareness.cir_list,
                                   self.awareness.access_table, paths,
                                   flow_info, msg.buffer_id, msg.data)
         return
