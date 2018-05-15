@@ -341,31 +341,37 @@ class ShortestForwarding(app_manager.RyuApp):
         len_cir = len(cir_list)
         len_pa = len(path)
         path_cir = []
+        bp_cir = []
         cir_cnt = 0
         cir_dir = []   # -1 means anticlockwise
+        bp_exclue = []
 
+        if len(path) <2:
+            return
         ##------first_dp-----------
         port_pair = self.get_port_pair_from_link(link_to_port,
-					         path[0], path[1])
+					                             path[0], path[1])
         out_port = port_pair[0]
                 # backward_wildcard
         self.send_flow_mod(first_dp, back_info, 0, in_port)
         for j in range(len_cir):
             if path[0] in cir_list[j] and path[1] in cir_list[j]:
-                p = cir_list[j].index(path[0])
+                print('first_cir:', cir_list[j])
+                bp_cir = cir_list[j]
+                p = bp_cir.index(path[0])
                 try:
-                    if path[1] == cir_list[j][p+1]:
-                        bp = cir_list[j][p-1]
+                    if path[1] == bp_cir[p+1]:
+                        bp = bp_cir[p-1]
                         cir_dir.append(-1)
                     else:
-                        bp = cir_list[j][p+1]
+                        bp = bp_cir[p+1]
                         cir_dir.append(1)
                 except IndexError:
-                    if path[1] == cir_list[j][0]:
-                        bp = cir_list[j][p-1]
+                    if path[1] == bp_cir[0]:
+                        bp = bp_cir[p-1]
                         cir_dir.append(-1)
                     else:
-                        bp = cir_list[j][0]
+                        bp = bp_cir[0]
                         cir_dir.append(1)
                 port_pair = self.get_port_pair_from_link(link_to_port,
                                                          path[0], bp)
@@ -373,9 +379,11 @@ class ShortestForwarding(app_manager.RyuApp):
                 # forward_ffg
                 self.send_group_mod(first_dp, self.gid, out_port, bp_port)
                 self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
-                # match return packets
-                self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
-                path_cir.append(cir_list[j])
+                ## match return packets
+                #self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
+                path_cir.append(bp_cir)
+                #bp_exclue[0].append(path[0])
+                #bp_exclue[0].append(path[1])
                 cir_cnt = 1
                 b = 1
                 break
@@ -394,17 +402,37 @@ class ShortestForwarding(app_manager.RyuApp):
         self.send_flow_mod(last_dp, flow_info, 0, dst_port)
         for j in range(len_cir):
             if path[-2] in cir_list[j] and path[-1] in cir_list[j]:
-                p = cir_list[j].index(path[-1])
+                bp_cir = cir_list[j]
+                print('last_cir:', bp_cir)
+                p = bp_cir.index(path[-1])
+                for k in range(len(path_cir)):
+                    if path[-2] in path_cir[k] and path[-1] in path_cir[k]:
+                        bp_cir = path_cir[k]
+                        #bp_exclue[cir_cnt].append(path[-2])
+                        #bp_exclue[cir_cnt].append(path[-1])
+                        break
+                    else:
+                        if k == len(path_cir)-1:
+                            path_cir.append(cir_list[j])
+                            bp_cir = cir_list[j]
+                            cir_cnt += 1
+                            #bp_exclue[cir_cnt] = [path[-2], path[-1]]
+                            if path[-2] == bp_cir[p-1]:
+                                cir_dir.append(-1)
+                            else:
+                                cir_dir.append(1)
+                        else:
+                            continue
                 try:
-                    if path[-2] == cir_list[j][p+1]:
-                        bp = cir_list[j][p-1]
+                    if path[-2] == bp_cir[p+1]:
+                        bp = bp_cir[p-1]
                     else:
-                        bp = cir_list[j][p+1]
+                        bp = bp_cir[p+1]
                 except IndexError:
-                    if path[-2] == cir_list[j][0]:
-                        bp = cir_list[j][p-1]
+                    if path[-2] == bp_cir[0]:
+                        bp = bp_cir[p-1]
                     else:
-                        bp = cir_list[j][0]
+                        bp = bp_cir[0]
                 port_pair = self.get_port_pair_from_link(link_to_port,
                                                          path[-1], bp)
                 bp_port = port_pair[0]
@@ -413,68 +441,132 @@ class ShortestForwarding(app_manager.RyuApp):
                 self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
                 # match return packets
                 self.send_flow_mod(last_dp, back_info, src_port, bp_port)
-                if cir_list[j] in path_cir:
-                    pass
-                else:
-                    path_cir.append(cir_list[j])
-                    cir_cnt += 1
-                    if path[-2] == cir_list[j][p-1]:
-                        cir_dir.append(-1)
-                    else:
-                        cir_dir.append(1)
                 b = 1
                 break
-            # forward_no_bp 
+            # backward_no_bp 
         if b == 0:
             self.send_flow_mod(last_dp, back_info, dst_port, src_port)
         b = 0
 
         ##-------inter_dp----------
+        ad = 0
         if len_pa > 2:
             for i in range(1, len_pa-1):
+                datapath = datapaths[path[i]]
+                port_pair = self.get_port_pair_from_link(link_to_port,
+                                                   path[i-1], path[i])
+                port_next = self.get_port_pair_from_link(link_to_port,
+                                                   path[i], path[i+1])
+                src_port, dst_port = port_pair[1], port_next[0]
                 for j in range(len_cir):
-                    datapath = datapaths[path[i]]
-                    port_pair = self.get_port_pair_from_link(link_to_port,
-                                                       path[i-1], path[i])
-                    port_next = self.get_port_pair_from_link(link_to_port,
-                                                       path[i], path[i+1])
-                    src_port, dst_port = port_pair[1], port_next[0]
                     if path[i] in cir_list[j]:
                         p = cir_list[j].index(path[i])
-                        if path[i-1] not in cir_list[j] and path[i+1] in cir_list[j]:
-                            print('inter_circle_01:', cir_list[j])
+                        if path[i-1] in cir_list[j] and path[i+1] not in cir_list[j]:
+                            f = 0
+                            print('inter_circle_10:', cir_list[j])
                             try:
-                                if path[i+1] == cir_list[j][p+1]:
+                                if path[i-1] == cir_list[j][p+1]:
                                     bp = cir_list[j][p-1]
                                 else:
                                     bp = cir_list[j][p+1]
                             except IndexError:
-                                if path[i+1] == cir_list[j][0]:
+                                if path[i-1] == cir_list[j][0]:
                                     bp = cir_list[j][p-1]
                                 else:
                                     bp = cir_list[j][0]
-                            
                             bp_port = self.get_port_pair_from_link(link_to_port,
                                                                     path[i], bp)[0]
-                            print('inter_dp, p, bp,bp_port:', path[i], p,  bp, bp_port)
-                            # forward_ffg
-                            self.send_group_mod(datapath, self.gid, dst_port, bp_port)
-                            self.send_flow_mod(datapath, flow_info, src_port, dst_port,
-                                               self.gid)
-                            # match return packets
-                            self.send_flow_mod(datapath, flow_info, dst_port, bp_port)
-                            # backward_wildcard
-                            self.send_flow_mod(datapath, back_info, 0, src_port)
-                            if cir_list[j] in path_cir:
-                                pass
-                            else:
-                                path_cir.append(cir_list[j])
-                                cir_cnt += 1
-                                if path[i+1] == cir_list[j][p+1]:
-                                    cir_dir.append(-1)
+                            for m in range(len_cir):
+                                if path[i] in cir_list[m] and path[i+1] in cir_list[m]:
+                                    bp_cir_ = cir_list[m]
+                                    print ('bp_cir__101', bp_cir_)
+                                    p_ = bp_cir_.index(path[i])
+                                    if bp_cir_ in path_cir:
+                                        pass
+                                    else:
+                                        path_cir.append(bp_cir_)
+                                        cir_cnt += 1
+                                        try:
+                                            if path[i+1] == bp_cir_[p_+1]:
+                                                cir_dir.append(-1)
+                                            else:
+                                                cir_dir.append(1)
+                                        except IndexError:
+                                            if path[i+1] == bp_cir_[0]:
+                                                cir_dir.append(-1)
+                                            else:
+                                                cir_dir.append(1)
+                                    if path[i-1] in bp_cir_:
+                                        print('inter_circle_1011')
+                                        f = 1
+                                        # forward_wildcard_ffg
+                                        self.send_group_mod(datapath, self.gid, dst_port,
+                                                            datapath.ofproto.OFPP_IN_PORT, src_port)
+                                        self.send_flow_mod(datapath, flow_info, bp_port, dst_port)
+                                        self.send_flow_mod(datapath, flow_info, src_port, dst_port,
+                                                           self.gid)
+                                          # match return packets
+                                        self.send_flow_mod(datapath, flow_info, dst_port, src_port)
+                                        # backward_ffg
+                                        self.send_group_mod(datapath, self.gid+1, src_port, bp_port)
+                                        self.send_flow_mod(datapath, back_info, dst_port, src_port,
+                                                           self.gid+1)
+
+                                        datapath_ = datapaths[path[i-1]]
+                                        p_ = bp_cir_.index(path[i-1])
+                                        try:
+                                            if path[i] == bp_cir_[p_+1]:
+                                                bp_ = bp_cir_[p_-1]
+                                            else:
+                                                bp_ = bp_cir_[p_+1]
+                                        except IndexError:
+                                            if path[i+1] == bp_cir_[0]:
+                                                bp_ = bp_cir_[p_-1]
+                                            else:
+                                                bp_ = bp_cir_[0]
+                                        bp_port_ = self.get_port_pair_from_link(link_to_port,
+                                                                                path[i-1], bp_)[0]
+                                        self.send_flow_mod(datapath_, flow_info, port_pair[0], bp_port_)
+                                        break
+                                    else:
+                                        print('inter_circle_1010')
+                                        f = 1
+                                        p_ = bp_cir_.index(path[i])
+                                        try:
+                                            if path[i+1] == bp_cir_[p_+1]:
+                                                bp_ = bp_cir_[p_-1]
+                                            else:
+                                                bp_ = bp_cir_[p_+1]
+                                        except IndexError:
+                                            if path[i+1] == bp_cir_[0]:
+                                                bp_ = bp_cir_[p_-1]
+                                            else:
+                                                bp_ = bp_cir_[0]
+                                        bp_port_ = self.get_port_pair_from_link(link_to_port,
+                                                                                path[i], bp_)[0]
+                                        # forward_wildcard_ffg
+                                        self.send_group_mod(datapath, self.gid, dst_port, bp_port_)
+                                        self.send_flow_mod(datapath, flow_info, 0, dst_port,
+                                                           self.gid)
+                                        # backward_ffg
+                                        self.send_group_mod(datapath, self.gid+1, src_port, bp_port)
+                                        self.send_flow_mod(datapath, back_info, 0, src_port,
+                                                           self.gid+1)
+                                        break
                                 else:
-                                    cir_dir.append(1)
-                            break
+                                    if m == len_cir-1 :
+                                        f =1
+                                        print('inter_cir_100')
+                                        # forward_wildcard
+                                        self.send_flow_mod(datapath, flow_info, 0, dst_port)
+                                        # backward_ffg
+                                        self.send_group_mod(datapath, self.gid, src_port, bp_port)
+                                        self.send_flow_mod(datapath, back_info, dst_port, src_port,
+                                                           self.gid)
+                                          # match return packets
+                                        self.send_flow_mod(datapath, back_info, src_port, bp_port)
+                            if f == 1:
+                                break
                         elif path[i-1] in cir_list[j] and path[i+1] in cir_list[j]:
                             print('inter_circle_11:', cir_list[j])
                             # forward_ffg
@@ -491,53 +583,46 @@ class ShortestForwarding(app_manager.RyuApp):
                                                self.gid+1)
                               # match return packets
                             self.send_flow_mod(datapath, back_info, src_port, dst_port)
-                            if cir_list[j] in path_cir:
+                            break
+                        elif path[i-1] not in cir_list[j] and path[i+1] in cir_list[j]:
+                            print('inter_circle_01:', cir_list[j])
+                            bp_cir = cir_list[j]
+                            if bp_cir in path_cir:
                                 pass
                             else:
-                                path_cir.append(cir_list[j])
+                                path_cir.append(bp_cir_)
                                 cir_cnt += 1
-                                if path[i-1] == cir_list[j][p-1]:
-                                    cir_dir.append(-1)
-                                else:
-                                    cir_dir.append(1)
-                            break
-                        elif path[i-1] in cir_list[j] and path[i+1] not in cir_list[j]:
-                            print('inter_circle_10:', cir_list[j])
-                            try:
-                                if path[i-1] == cir_list[j][p+1]:
-                                    bp = cir_list[j][p-1]
-                                else:
-                                    bp = cir_list[j][p+1]
-                            except IndexError:
-                                if path[i-1] == cir_list[j][0]:
-                                    bp = cir_list[j][p-1]
-                                else:
-                                    bp = cir_list[j][0]
+                                try:
+                                    if path[i+1] == bp_cir[p+1]:
+                                        bp = bp_cir[p-1]
+                                        cir_dir.append(-1)
+                                    else:
+                                        bp = bp_cir[p+1]
+                                        cir_dir.append(1)
+                                except IndexError:
+                                    if path[i+1] == bp_cir[0]:
+                                        bp = bp_cir[p-1]
+                                        cir_dir.append(-1)
+                                    else:
+                                        bp = bp_cir[0]
+                                        cir_dir.append(1)
                             bp_port = self.get_port_pair_from_link(link_to_port,
                                                                     path[i], bp)[0]
-                            # forward_wildcard
-                            self.send_flow_mod(datapath, flow_info, 0, dst_port)
-                            # backward_ffg
-                            self.send_group_mod(datapath, self.gid, src_port, bp_port)
-                            self.send_flow_mod(datapath, back_info, dst_port, src_port,
+                            print('inter_dp, p, bp,bp_port:', path[i], p,  bp, bp_port)
+                            # forward_ffg
+                            self.send_group_mod(datapath, self.gid, dst_port, bp_port)
+                            self.send_flow_mod(datapath, flow_info, src_port, dst_port,
                                                self.gid)
-                              # match return packets
-                            self.send_flow_mod(datapath, back_info, src_port, bp_port)
-                            if cir_list[j] in path_cir:
-                                pass
-                            else:
-                                path_cir.append(cir_list[j])
-                                cir_cnt += 1
-                                if path[i-1] == cir_list[j][p-1]:
-                                    cir_dir.append(-1)
-                                else:
-                                    cir_dir.append(1)
+                            # match return packets
+                            self.send_flow_mod(datapath, flow_info, dst_port, bp_port)
+                            # backward_wildcard
+                            self.send_flow_mod(datapath, back_info, 0, src_port)
                             break
                         elif path[i-1] not in cir_list[j] and path[i+1] not in cir_list[j]:
-                            self.send_flow_mod(datapath, flow_info, src_port, dst_port)
-                            self.send_flow_mod(datapath, back_info, dst_port, src_port)
-                            break
-
+                            if j == len_cir-1:
+                                print('inter_circle_00')
+                                self.send_flow_mod(datapath, flow_info, src_port, dst_port)
+                                self.send_flow_mod(datapath, back_info, dst_port, src_port)
 
         ##--------bp_dp---------------
         print('\npath_cir:\n', path_cir)
@@ -547,6 +632,7 @@ class ShortestForwarding(app_manager.RyuApp):
                     pass
                 else:
                     p = path_cir[j].index(i)
+                    print("bp_i, path_cir, p, dir:", i, path_cir[j], p, cir_dir[j] )
                     #print('i:', i)
                     try:
                         port = self.get_port_pair_from_link(link_to_port,
@@ -559,7 +645,7 @@ class ShortestForwarding(app_manager.RyuApp):
                                                    path_cir[j][p], path_cir[j][p+cir_dir[j]])
                     except IndexError:
                         port_next = self.get_port_pair_from_link(link_to_port,
-                                                   path_cir[i][p], path_cir[j][0])
+                                               path_cir[j][p], path_cir[j][0])
 
                     if port and port_next:
                         src_port, dst_port = port[1], port_next[0]

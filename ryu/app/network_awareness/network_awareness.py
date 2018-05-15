@@ -269,7 +269,7 @@ class NetworkAwareness(app_manager.RyuApp):
         #print('graph.nodes:', self.graph.nodes(), '\n')
         self.get_udgraph(self.link_to_port.keys())
         self.cir_cnt = fc.find_all_cirs(self.udgraph, len(switch_list), self.cir_list)
-        print ('\noooooo     all_circles:\n', self.cir_list)
+        #print ('\noooooo     all_circles:\n', self.cir_list)
         self.shortest_paths = self.all_k_shortest_paths(
             self.graph, weight='weight', k=CONF.k_paths)
         #print('self.shortest_paths:', self.shortest_paths, '\n------')
