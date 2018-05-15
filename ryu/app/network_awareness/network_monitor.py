@@ -28,6 +28,8 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib import hub
 from ryu.lib.packet import packet
 import setting
+import time,datetime
+import copy
 
 
 CONF = cfg.CONF
@@ -59,6 +61,10 @@ class NetworkMonitor(app_manager.RyuApp):
         # free bandwidth of links respectively.
         self.monitor_thread = hub.spawn(self._monitor)
         self.save_freebandwidth_thread = hub.spawn(self._save_bw_graph)
+        self.pre = {}
+        self.tim_rq = []
+        self.tim_rp = []
+        self.tim_pre = 0
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -95,6 +101,31 @@ class NetworkMonitor(app_manager.RyuApp):
                 self.show_stat('port')
                 hub.sleep(1)
 
+        #self.stats['port'] = {}
+        #self.pre['port'] = {}
+        #while CONF.weight == 'hop':
+        #    #self.pre = self.stats
+        #    self.pre = copy.deepcopy(self.stats)
+        #    for dp in self.datapaths.values():
+        #        #print('\n^^^^^___   dpid:', dp.id)
+        #        self.port_features.setdefault(dp.id, {})
+        #        self._request_stats(dp)
+        #        # refresh data.
+        #        self.capabilities = None
+        #        self.best_paths = None
+        #    #print(self.pre)
+        #    #print(self.stats)
+        #    if self.pre != self.stats:
+        #        print('HAHAHHAHAHA')
+        #        self.show_stat('port')
+        #    #self.show_stat('port')
+        #    hub.sleep(3)
+            #if self.stats['port']:
+            #    self.show_stat('port')
+            #    print(self.port_features)
+            #    hub.sleep(1)
+
+
     def _save_bw_graph(self):
         """
             Save bandwidth data into networkx graph object.
@@ -117,9 +148,9 @@ class NetworkMonitor(app_manager.RyuApp):
 
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
-
-        req = parser.OFPFlowStatsRequest(datapath)
-        datapath.send_msg(req)
+        self.tim_rq.append(time.time()*1000)
+        #req = parser.OFPFlowStatsRequest(datapath)
+        #datapath.send_msg(req)
 
     def get_min_bw_of_links(self, graph, path, min_bw):
         """
@@ -271,7 +302,9 @@ class NetworkMonitor(app_manager.RyuApp):
         """
         body = ev.msg.body
         dpid = ev.msg.datapath.id
+        #print('\n______stats_rp:', dpid)
         self.stats['port'][dpid] = body
+        #print(self.stats['port'].keys())
         self.free_bandwidth.setdefault(dpid, {})
 
         for stat in sorted(body, key=attrgetter('port_no')):
@@ -307,6 +340,10 @@ class NetworkMonitor(app_manager.RyuApp):
         msg = ev.msg
         dpid = msg.datapath.id
         ofproto = msg.datapath.ofproto
+        a = [0,0,0]
+        self.tim_rp.append(ev.timestamp*1000)
+        #for i in range(len(self.tim_rp)):
+        #    print('round time for desc_stats:', self.tim_rp[i]-self.tim_rq[i])
 
         config_dict = {ofproto.OFPPC_PORT_DOWN: "Down",
                        ofproto.OFPPC_NO_RECV: "No Recv",
@@ -328,10 +365,15 @@ class NetworkMonitor(app_manager.RyuApp):
                           p.state, p.curr, p.advertised,
                           p.supported, p.peer, p.curr_speed,
                           p.max_speed))
-
+            g = 0
             if p.config in config_dict:
                 config = config_dict[p.config]
+                if dpid==2 and p.port_no==2:
+                    g = round(ev.timestamp*1000)
+                    print('time:', g, self.tim_pre, g-self.tim_pre)
             else:
+                if dpid==2 and p.port_no==2 and p.config == "up":
+                    self.tim_pre = round(ev.timestamp*1000)
                 config = "up"
 
             if p.state in state_dict:
@@ -339,8 +381,30 @@ class NetworkMonitor(app_manager.RyuApp):
             else:
                 state = "up"
 
+            if dpid==2 and p.port_no==2:
+                if state == "up":
+                    self.tim_pre = round(ev.timestamp*1000)
+                else:
+                    g = round(ev.timestamp*1000)
+                    #print('time:', g-self.tim_pre)
+
             port_feature = (config, state, p.curr_speed)
+            #try:
+            #    if self.port_features[dpid][p.port_no] == port_feature:
+            #        pass
+            #    else:
+            #        a[dpid-1] += 1
+
+            #        #if self.port_features[dpid][p.port_no]
+            #        print(ev.timestamp, 'port_changed_to:', dpid, p.port_no, port_feature)
+            #except KeyError:
+            #    a[dpid-1] += 1
+
             self.port_features[dpid][p.port_no] = port_feature
+        #print(self.stats['port'].keys())
+        #if a != [0,0,0]:
+        #    print(self.port_features[3])
+        #    self.show_stat('port')
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def _port_status_handler(self, ev):
@@ -356,12 +420,13 @@ class NetworkMonitor(app_manager.RyuApp):
         reason_dict = {ofproto.OFPPR_ADD: "added",
                        ofproto.OFPPR_DELETE: "deleted",
                        ofproto.OFPPR_MODIFY: "modified", }
-
         if reason in reason_dict:
 
             print("switch%d: port %s %s" % (dpid, reason_dict[reason], port_no))
         else:
             print("switch%d: Illeagal port state %s %s" % (port_no, reason))
+
+
 
     def show_stat(self, type):
         '''
@@ -372,6 +437,7 @@ class NetworkMonitor(app_manager.RyuApp):
             return
 
         bodys = self.stats[type]
+        print (self.stats[type].keys())
         if(type == 'flow'):
             print('datapath         ''   in-port        ip-dst      '
                   'out-port packets  bytes  flow-speed(B/s)')
@@ -404,6 +470,7 @@ class NetworkMonitor(app_manager.RyuApp):
                   '   -----------    -----------')
             format = '%016x %8x %8d %8d %8d %8d %8d %8d %8.1f %16d %16s %16s'
             for dpid in bodys.keys():
+                print(dpid)
                 for stat in sorted(bodys[dpid], key=attrgetter('port_no')):
                     if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
                         print(format % (

@@ -30,6 +30,7 @@ from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import arp
+from ryu.lib.packet import lldp
 from ryu.lib.packet import ether_types
 
 from ryu.topology import event, switches
@@ -358,14 +359,14 @@ class ShortestForwarding(app_manager.RyuApp):
                         cir_dir.append(-1)
                     else:
                         bp = cir_list[j][p+1]
-                        cir_dir[0] = 1
+                        cir_dir.append(1)
                 except IndexError:
                     if path[1] == cir_list[j][0]:
                         bp = cir_list[j][p-1]
-                        cir_dir.append(1)
+                        cir_dir.append(-1)
                     else:
                         bp = cir_list[j][0]
-                        cir_dir[0] = 1
+                        cir_dir.append(1)
                 port_pair = self.get_port_pair_from_link(link_to_port,
                                                          path[0], bp)
                 bp_port = port_pair[0]
@@ -406,7 +407,7 @@ class ShortestForwarding(app_manager.RyuApp):
                         bp = cir_list[j][0]
                 port_pair = self.get_port_pair_from_link(link_to_port,
                                                          path[-1], bp)
-                bp_port = port_pair[1]
+                bp_port = port_pair[0]
                 # backward_ffg
                 self.send_group_mod(last_dp, self.gid, src_port, bp_port)
                 self.send_flow_mod(last_dp, back_info, dst_port, src_port, self.gid)
@@ -441,6 +442,7 @@ class ShortestForwarding(app_manager.RyuApp):
                     if path[i] in cir_list[j]:
                         p = cir_list[j].index(path[i])
                         if path[i-1] not in cir_list[j] and path[i+1] in cir_list[j]:
+                            print('inter_circle_01:', cir_list[j])
                             try:
                                 if path[i+1] == cir_list[j][p+1]:
                                     bp = cir_list[j][p-1]
@@ -474,6 +476,7 @@ class ShortestForwarding(app_manager.RyuApp):
                                     cir_dir.append(1)
                             break
                         elif path[i-1] in cir_list[j] and path[i+1] in cir_list[j]:
+                            print('inter_circle_11:', cir_list[j])
                             # forward_ffg
                             self.send_group_mod(datapath, self.gid, dst_port,
                                                 datapath.ofproto.OFPP_IN_PORT, src_port)
@@ -499,6 +502,7 @@ class ShortestForwarding(app_manager.RyuApp):
                                     cir_dir.append(1)
                             break
                         elif path[i-1] in cir_list[j] and path[i+1] not in cir_list[j]:
+                            print('inter_circle_10:', cir_list[j])
                             try:
                                 if path[i-1] == cir_list[j][p+1]:
                                     bp = cir_list[j][p-1]
@@ -606,7 +610,11 @@ class ShortestForwarding(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         arp_pkt = pkt.get_protocol(arp.arp)
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        lldp_pkt = pkt.get_protocol(lldp.lldp)
         eth = pkt.get_protocol(ethernet.ethernet)
+
+        #if isinstance(lldp_pkt, lldp.lldp):
+        #    print ('^^^   LLDP ^^^^')
 
         if isinstance(arp_pkt, arp.arp):
             print('\nARP: packet in switch', datapath.id, 'in_port:', in_port,
