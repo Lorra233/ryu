@@ -379,8 +379,8 @@ class ShortestForwarding(app_manager.RyuApp):
                 # forward_ffg
                 self.send_group_mod(first_dp, self.gid, out_port, bp_port)
                 self.send_flow_mod(first_dp, flow_info, in_port, out_port, self.gid)
-                ## match return packets
-                #self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
+                # match return packets
+                self.send_flow_mod(first_dp, flow_info, out_port, bp_port)
                 path_cir.append(bp_cir)
                 #bp_exclue[0].append(path[0])
                 #bp_exclue[0].append(path[1])
@@ -547,6 +547,7 @@ class ShortestForwarding(app_manager.RyuApp):
                                         self.send_group_mod(datapath, self.gid, dst_port, bp_port_)
                                         self.send_flow_mod(datapath, flow_info, 0, dst_port,
                                                            self.gid)
+                                        
                                         # backward_ffg
                                         self.send_group_mod(datapath, self.gid+1, src_port, bp_port)
                                         self.send_flow_mod(datapath, back_info, 0, src_port,
